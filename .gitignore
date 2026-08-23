@@ -1,0 +1,14 @@
+# Raw/generated datasets - not committed, regenerate via data_gen scripts
+data/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Env files
+.env
+
+# OS
+.DS_Store
