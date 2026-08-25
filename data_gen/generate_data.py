@@ -1,8 +1,8 @@
 """
 Phase 1: Synthetic recurring-mandate dataset generator.
 Grounded in real distributions pulled from shivamb/bank-customer-segmentation.
-v2: narrowed balance range to subscription-relevant segment, increased volatility
-to better match real-world UPI Autopay failure rates (8-15%, per NPCI data).
+v3: shock probability now scales with customer volatility (cv) instead of a
+flat coin-flip, so recent_failure_rate becomes a genuinely learnable signal.
 """
 
 import numpy as np
@@ -14,9 +14,6 @@ N_CUSTOMERS = 3000
 N_CYCLES = 6
 
 # --- Real distributions, narrowed to the subscription-relevant segment ---
-# Full population was 0-100th pctile (up to 11.5L); subscription customers are
-# more realistically drawn from the lower-to-middle segment, not high-net-worth
-# outliers. Interpolated 10th/75th pctile anchors from the original quartile data.
 BALANCE_PCTS = [10, 25, 50, 75]
 BALANCE_VALS = [1888, 4721, 16792, 57657]
 
@@ -67,14 +64,17 @@ def simulate_true_balance(baseline_balance, mandate_amount, cv, days_since_salar
     noise = np.clip(noise, 0.02, None)
     smooth_balance = baseline_balance * depletion_factor * noise
 
-    # Discrete "bad month" shock, sized relative to the mandate amount itself
-    # (guarantees a real shortfall when triggered, unlike v2 which scaled off
-    # baseline balance and rarely dipped below a much smaller mandate amount).
-    shock_prob = 0.10
+    # Shock probability scales with customer volatility (cv) - a real,
+    # learnable relationship, rather than a coin-flip independent of any
+    # known customer trait. cv ranges roughly 0-2.4 in our data; normalize
+    # to keep shock_prob in a reasonable 5%-25% band.
+    cv_normalized = np.clip(cv / 2.4, 0, 1)
+    shock_prob = 0.05 + 0.20 * cv_normalized
     shock_mask = rng.random(len(baseline_balance)) < shock_prob
     shocked_balance = mandate_amount * rng.uniform(0.3, 0.95, size=len(baseline_balance))
 
     return np.where(shock_mask, shocked_balance, smooth_balance)
+
 
 def generate_dataset():
     customers = generate_customers(N_CUSTOMERS)
@@ -84,9 +84,9 @@ def generate_dataset():
     for cycle in range(1, N_CYCLES + 1):
         dsd = days_since_salary(customers["debit_day"].values, customers["salary_day"].values)
         true_balance = simulate_true_balance(
-    customers["baseline_balance"].values, customers["mandate_amount"].values,
-    customers["cv"].values, dsd
-)
+            customers["baseline_balance"].values, customers["mandate_amount"].values,
+            customers["cv"].values, dsd
+        )
 
         safety_buffer = rng.normal(loc=1.05, scale=0.1, size=len(customers))
         failed = true_balance < (customers["mandate_amount"].values * safety_buffer)
@@ -105,6 +105,7 @@ def generate_dataset():
                 "amount_to_balance_ratio": customers["mandate_amount"].values[i] / customers["baseline_balance"].values[i],
                 "true_balance_at_debit": true_balance[i],  # AUDIT ONLY - drop before training
                 "label_failed": int(failed[i]),
+                "balance_volatility": customers["cv"].values[i],
             })
 
             failure_history[cid].append(int(failed[i]))
