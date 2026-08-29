@@ -134,7 +134,8 @@ class ComplianceTracker:
 # standardized feature values. Pure arithmetic, no LLM.
 # ============================================================
 def compute_reason_code(feature_row: pd.Series, model, scaler, features: list[str], top_n: int = 2) -> str:
-    scaled = scaler.transform(feature_row[features].values.reshape(1, -1))[0]
+    row_df = feature_row[features].to_frame().T  # keep as DataFrame with column names, avoids sklearn warning
+    scaled = scaler.transform(row_df)[0]
     contributions = scaled * model.coef_[0]
     ranked = sorted(zip(features, contributions), key=lambda x: -abs(x[1]))[:top_n]
 

@@ -100,6 +100,8 @@ def generate_dataset():
                 "cycle": cycle,
                 "mandate_amount": customers["mandate_amount"].values[i],
                 "baseline_balance": customers["baseline_balance"].values[i],
+                "salary_day": customers["salary_day"].values[i],
+                "debit_day": customers["debit_day"].values[i],
                 "days_since_salary_at_debit": dsd[i],
                 "recent_failure_rate": recent_failure_rate,
                 "amount_to_balance_ratio": customers["mandate_amount"].values[i] / customers["baseline_balance"].values[i],
