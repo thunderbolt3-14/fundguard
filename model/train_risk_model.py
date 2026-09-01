@@ -13,6 +13,7 @@ from sklearn.metrics import (
     confusion_matrix, classification_report
 )
 import joblib
+import json
 
 df = pd.read_csv("./data/synthetic_mandates.csv")
 
@@ -66,3 +67,15 @@ for feat, coef in sorted(zip(FEATURES, model.coef_[0]), key=lambda x: -abs(x[1])
 
 joblib.dump({"model": model, "scaler": scaler, "features": FEATURES}, "./model/risk_model.joblib")
 print("\nModel saved to ./model/risk_model.joblib")
+
+metrics = {
+    "auc": round(roc_auc_score(y_test, y_proba), 4),
+    "precision": round(precision_score(y_test, y_pred), 4),
+    "recall": round(recall_score(y_test, y_pred), 4),
+    "feature_coefficients": {feat: round(float(coef), 4) for feat, coef in zip(FEATURES, model.coef_[0])},
+    "training_rows": len(X_train),
+    "test_rows": len(X_test),
+}
+with open("./model/model_metrics.json", "w") as f:
+    json.dump(metrics, f, indent=2)
+print("\nMetrics saved to ./model/model_metrics.json")

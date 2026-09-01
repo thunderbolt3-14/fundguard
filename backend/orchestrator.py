@@ -1,8 +1,8 @@
 """
-Phase 6b/7b: Core orchestration logic - ingests a batch of mandate-cycle rows,
-runs the full risk -> rules -> triage -> (optional) messaging -> (optional)
-Razorpay integration pipeline, and persists every decision to Postgres as
-the audit trail.
+Phase 6b/7b/6c: Core orchestration logic - ingests a batch of mandate-cycle rows,
+runs the full risk -> rules -> compliance check -> triage -> (optional)
+messaging -> (optional) Razorpay integration pipeline, and persists every
+decision to Postgres as the audit trail.
 """
 
 import sys
@@ -37,11 +37,6 @@ def get_or_create_customer(db: Session, row: pd.Series) -> Customer:
         try:
             db.flush()
         except IntegrityError:
-            # Concurrent request created this customer between our check and
-            # our insert (e.g. two overlapping batch runs, such as a double
-            # click on the frontend's "run batch" button in Phase 8). Roll
-            # back this failed insert and fetch the row the other request
-            # just created, instead of crashing the whole request.
             db.rollback()
             customer = db.get(Customer, row["customer_id"])
     return customer
@@ -56,7 +51,7 @@ def get_or_create_mandate(db: Session, row: pd.Series, customer: Customer, creat
     if mandate is None:
         mandate = Mandate(
             customer_id=customer.customer_id,
-            mandate_name="Subscription",  # generic placeholder; real name would come from merchant data
+            mandate_name="Subscription",
             mandate_amount=float(row["mandate_amount"]),
             debit_day=int(row["debit_day"]),
         )
@@ -70,7 +65,7 @@ def get_or_create_mandate(db: Session, row: pd.Series, customer: Customer, creat
                 .filter_by(customer_id=customer.customer_id, mandate_amount=float(row["mandate_amount"]))
                 .first()
             )
-            return mandate  # skip Razorpay creation this time - the other concurrent request handles it
+            return mandate
 
         if create_razorpay:
             try:
@@ -80,32 +75,50 @@ def get_or_create_mandate(db: Session, row: pd.Series, customer: Customer, creat
                 mandate.razorpay_subscription_id = rzp_result["razorpay_subscription_id"]
                 db.flush()
             except Exception as e:
-                # Razorpay API failures shouldn't crash the whole batch - the
-                # core risk/rules/triage pipeline is independent of this
-                # integration and should keep running even if Razorpay is
-                # unavailable, rate-limited, or a duplicate-customer error
-                # occurs (e.g. re-running a batch that overlaps prior test runs).
                 print(f"Razorpay integration failed for {customer.customer_id}: {e}")
 
     return mandate
 
 
+def check_compliance(db: Session, customer_id: str, mandate_id: int, cycle_number: int) -> tuple[bool, str | None]:
+    """
+    Real, DB-backed compliance check (not an in-memory tracker, since that
+    can't survive across separate API requests). Two hard stopping rules
+    from RBI/NPCI research:
+      1. Max one intervention per mandate per cycle
+      2. One active pre-debit notice per customer at a time (across all
+         their mandates, within the same cycle)
+    """
+    existing_for_mandate = (
+        db.query(CycleEvent)
+        .filter(CycleEvent.mandate_id == mandate_id, CycleEvent.cycle_number == cycle_number,
+                CycleEvent.predictive_action != "no_action", CycleEvent.blocked_reason.is_(None))
+        .first()
+    )
+    if existing_for_mandate:
+        return True, "BLOCKED: max one intervention per mandate per cycle already used"
+
+    existing_for_customer = (
+        db.query(CycleEvent)
+        .join(Mandate, CycleEvent.mandate_id == Mandate.mandate_id)
+        .filter(Mandate.customer_id == customer_id, CycleEvent.cycle_number == cycle_number,
+                CycleEvent.predictive_action != "no_action", CycleEvent.blocked_reason.is_(None))
+        .first()
+    )
+    if existing_for_customer:
+        return True, "BLOCKED: customer already has an active pre-debit notice this cycle"
+
+    return False, None
+
+
 def process_batch(db: Session, df: pd.DataFrame, generate_messages: bool = False, tone: str = "english",
                    create_razorpay: bool = False) -> dict:
-    """
-    Runs every row in df through the full pipeline and persists results.
-    generate_messages=False skips the (slow, quota-consuming) LLM call.
-    create_razorpay=True creates real Razorpay test-mode Plan/Customer/
-    Subscription objects for mandates seen for the first time - kept
-    optional since it involves real network calls and should typically
-    only be used for small demo-sized batches, not bulk synthetic runs.
-    """
     X_scaled = SCALER.transform(df[FEATURES])
     df = df.copy()
     df["risk_score"] = MODEL.predict_proba(X_scaled)[:, 1]
 
     summary = {"total": len(df), "actions": {}, "failures": 0, "retries_scheduled": 0,
-               "messages_generated": 0, "razorpay_subscriptions_created": 0}
+               "messages_generated": 0, "razorpay_subscriptions_created": 0, "compliance_blocks": 0}
 
     for _, row in df.iterrows():
         customer = get_or_create_customer(db, row)
@@ -114,19 +127,34 @@ def process_batch(db: Session, df: pd.DataFrame, generate_messages: bool = False
             summary["razorpay_subscriptions_created"] += 1
 
         band, action = decide_action(row["risk_score"], row["mandate_amount"])
-        reason_code = compute_reason_code(row, MODEL, SCALER, FEATURES) if action.value != "no_action" else None
+        cycle_number = int(row["cycle"])
+
+        blocked_reason = None
+        if action.value != "no_action":
+            is_blocked, reason = check_compliance(db, customer.customer_id, mandate.mandate_id, cycle_number)
+            if is_blocked:
+                blocked_reason = reason
+                summary["compliance_blocks"] += 1
+                action_for_record = "no_action"  # downgraded due to compliance block
+            else:
+                action_for_record = action.value
+        else:
+            action_for_record = action.value
+
+        reason_code = compute_reason_code(row, MODEL, SCALER, FEATURES) if (action.value != "no_action" and not blocked_reason) else None
 
         event = CycleEvent(
             mandate_id=mandate.mandate_id,
-            cycle_number=int(row["cycle"]),
+            cycle_number=cycle_number,
             risk_score=float(row["risk_score"]),
             risk_band=band.value,
-            predictive_action=action.value,
+            predictive_action=action_for_record,
             reason_code=reason_code,
+            blocked_reason=blocked_reason,
             actual_outcome_failed=bool(row["label_failed"]),
         )
 
-        summary["actions"][action.value] = summary["actions"].get(action.value, 0) + 1
+        summary["actions"][action_for_record] = summary["actions"].get(action_for_record, 0) + 1
 
         if row["label_failed"]:
             summary["failures"] += 1
@@ -140,12 +168,12 @@ def process_batch(db: Session, df: pd.DataFrame, generate_messages: bool = False
         db.add(event)
         db.flush()
 
-        if generate_messages and action.value != "no_action":
+        if generate_messages and action_for_record != "no_action":
             msg_text = generate_message(
-                action=action.value, mandate_name=mandate.mandate_name,
+                action=action_for_record, mandate_name=mandate.mandate_name,
                 amount=float(mandate.mandate_amount), debit_date="upcoming cycle", tone=tone,
             )
-            db.add(Message(event_id=event.event_id, action_type=action.value, tone=tone, message_text=msg_text))
+            db.add(Message(event_id=event.event_id, action_type=action_for_record, tone=tone, message_text=msg_text))
             summary["messages_generated"] += 1
 
     db.commit()

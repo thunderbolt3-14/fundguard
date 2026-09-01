@@ -43,6 +43,7 @@ class CycleEvent(Base):
     retry_scheduled = Column(Boolean)
     retry_expected_value = Column(Numeric(10, 2))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    blocked_reason = Column(Text)
 
 
 class Message(Base):
