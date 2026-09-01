@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS mandates (
     mandate_name           VARCHAR(100) NOT NULL,
     mandate_amount          NUMERIC(12,2) NOT NULL,
     debit_day               SMALLINT NOT NULL CHECK (debit_day BETWEEN 1 AND 28),
+    razorpay_subscription_id VARCHAR(50),
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

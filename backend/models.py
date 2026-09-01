@@ -25,6 +25,7 @@ class Mandate(Base):
     mandate_name = Column(String(100), nullable=False)
     mandate_amount = Column(Numeric(12, 2), nullable=False)
     debit_day = Column(SmallInteger, nullable=False)
+    razorpay_subscription_id = Column(String(50))
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
 

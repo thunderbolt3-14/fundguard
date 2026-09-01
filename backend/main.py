@@ -20,13 +20,9 @@ def run_batch(
     limit: int = Query(50, description="Number of mandate-cycle rows to process"),
     generate_messages: bool = Query(False, description="Whether to call the LLM for each flagged mandate"),
     tone: str = Query("english", description="'english' or 'hinglish'"),
+    create_razorpay: bool = Query(False, description="Whether to create real Razorpay test-mode subscriptions"),
     db: Session = Depends(get_db),
 ):
-    """
-    Runs a batch of synthetic mandate-cycle rows through the full pipeline:
-    risk scoring -> rule engine -> reactive triage -> optional LLM messaging.
-    Every decision is persisted to Postgres as it happens.
-    """
     df = pd.read_csv("./data/synthetic_mandates.csv").head(limit)
-    summary = process_batch(db, df, generate_messages=generate_messages, tone=tone)
+    summary = process_batch(db, df, generate_messages=generate_messages, tone=tone, create_razorpay=create_razorpay)
     return summary
