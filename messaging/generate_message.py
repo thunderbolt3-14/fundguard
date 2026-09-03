@@ -102,6 +102,7 @@ def generate_message(action: str, mandate_name: str, amount: float, debit_date: 
             system_instruction=SYSTEM_INSTRUCTION,
             max_output_tokens=1024,
             temperature=0.7,
+            http_options=genai.types.HttpOptions(retry_options=genai.types.HttpRetryOptions(attempts=1)),
         ),
     )
     return response.text.strip()

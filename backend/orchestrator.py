@@ -168,13 +168,21 @@ def process_batch(db: Session, df: pd.DataFrame, generate_messages: bool = False
         db.add(event)
         db.flush()
 
-        if generate_messages and action_for_record != "no_action":
-            msg_text = generate_message(
-                action=action_for_record, mandate_name=mandate.mandate_name,
-                amount=float(mandate.mandate_amount), debit_date="upcoming cycle", tone=tone,
-            )
-            db.add(Message(event_id=event.event_id, action_type=action_for_record, tone=tone, message_text=msg_text))
-            summary["messages_generated"] += 1
+        MAX_MESSAGES_PER_BATCH = 2  # stays safely under Gemini free tier's 5-requests-per-minute limit
+        if generate_messages and action_for_record != "no_action" and summary["messages_generated"] < MAX_MESSAGES_PER_BATCH:
+            try:
+                msg_text = generate_message(
+                    action=action_for_record, mandate_name=mandate.mandate_name,
+                    amount=float(mandate.mandate_amount), debit_date="upcoming cycle", tone=tone,
+                )
+                db.add(Message(event_id=event.event_id, action_type=action_for_record, tone=tone, message_text=msg_text))
+                summary["messages_generated"] += 1
+            except Exception as e:
+                # Gemini free-tier rate limits (5 req/min) or transient API
+                # errors shouldn't crash the whole batch - the risk/rules/
+                # triage pipeline is independent of the messaging layer and
+                # should keep running even if message generation fails.
+                print(f"Message generation failed for event {event.event_id}: {e}")
 
     db.commit()
     return summary
