@@ -42,7 +42,7 @@ flowchart TD
 ## What's genuinely real vs. synthetic (stated plainly)
 
 - **Real:** the model architecture, feature engineering, rule engine, compliance logic (all grounded in actual NPCI/RBI rules), the Gemini messaging layer, the full backend/database/frontend stack, and the Razorpay API integration (real test-mode objects, verifiable in their dashboard).
-- **Synthetic:** the training data itself. No real UPI transaction dataset exists publicly, so we built a generator grounded in real distributions (from a public Indian bank transaction dataset) rather than inventing numbers outright. The trained model's specific coefficients are an artifact of this synthetic data — a real deployment would retrain on real mandate history, but the architecture and methodology would transfer directly.
+- **Synthetic:** the training data itself. No real UPI transaction dataset exists publicly, so I built a generator grounded in real distributions (from a public Indian bank transaction dataset) rather than inventing numbers outright. The trained model's specific coefficients are an artifact of this synthetic data — a real deployment would retrain on real mandate history, but the architecture and methodology would transfer directly.
 
 ## Tech stack
 
@@ -85,19 +85,19 @@ npm install
 npm run dev
 ```
 
-## Real challenges and how we solved them
+## Real challenges and how I solved them
 
-**Calibrating a realistic failure rate.** Our first synthetic-data model gave a 3.77% failure rate — far below NPCI's real 8–15%. Diagnosed the cause (continuous noise couldn't push small subscription amounts below a large balance), and fixed it by modeling failures the way they actually happen: not smooth and continuous, but clustered in occasional "bad months" — a discrete shock event, reaching a realistic 14.6%.
+**Calibrating a realistic failure rate.** My first synthetic-data model gave a 3.77% failure rate — far below NPCI's real 8–15%. I diagnosed the cause (continuous noise couldn't push small subscription amounts below a large balance), and fixed it by modeling failures the way they actually happen: not smooth and continuous, but clustered in occasional "bad months" — a discrete shock event, reaching a realistic 14.6%.
 
-**A feature fix that broke something else.** Tying failure risk to customer volatility improved data realism but dropped our model's AUC from 0.604 to 0.589, because the model could no longer see the variable now driving most of the outcome. Fixed by adding "balance volatility" as a real feature — reframed honestly as a proxy obtainable via India's Account Aggregator framework, not an invented shortcut — lifting AUC to 0.649.
+**A feature fix that broke something else.** Tying failure risk to customer volatility improved data realism but dropped my model's AUC from 0.604 to 0.589, because the model could no longer see the variable now driving most of the outcome. I fixed it by adding "balance volatility" as a real feature — reframed honestly as a proxy obtainable via India's Account Aggregator framework, not an invented shortcut — lifting AUC to 0.649.
 
-**Compliance rules that looked right in a test script but weren't wired into production.** A full audit before building the frontend found that our NPCI/RBI-based stopping rules only existed in a standalone demo script, never the live API. Fixed with a real database-backed compliance check, verified with real blocks in production testing.
+**Compliance rules that looked right in a test script but weren't wired into production.** A full audit before building the frontend found that my NPCI/RBI-based stopping rules only existed in a standalone demo script, never the live API. I fixed this with a real database-backed compliance check, verified with real blocks in production testing.
 
-**A silent-churn override that didn't actually override.** Our first ROI model let disengaging customers get retried anyway, since even a 10% success chance cleared the tiny processing-cost math. Fixed by making silent-churn a hard categorical override rather than a probability input — recognizing that annoying someone who's leaving has a real cost a few-rupee fee doesn't capture.
+**A silent-churn override that didn't actually override.** My first ROI model let disengaging customers get retried anyway, since even a 10% success chance cleared the tiny processing-cost math. I fixed it by making silent-churn a hard categorical override rather than a probability input — recognizing that annoying someone who's leaving has a real cost a few-rupee fee doesn't capture.
 
-**Gemini's free-tier limits, hit twice.** First, a truncation bug (newer Gemini models spend the token budget on internal "thinking" before the visible answer) — fixed by raising the token budget and removing an incompatible parameter. Later, we hit the actual daily free-tier quota (20 requests/day) from heavy testing — fixed with graceful failure handling (a stuck message generation no longer crashes a whole batch) and a fast-fail retry setting, then simply waited for the daily reset.
+**Gemini's free-tier limits, hit twice.** First, a truncation bug (newer Gemini models spend the token budget on internal "thinking" before the visible answer) — I fixed it by raising the token budget and removing an incompatible parameter. Later, I hit the actual daily free-tier quota (20 requests/day) from heavy testing — I fixed this with graceful failure handling (a stuck message generation no longer crashes a whole batch) and a fast-fail retry setting, then simply waited for the daily reset.
 
-**A demo-breaking bug found through dogfooding.** Repeated testing kept hitting the same early rows, which our own compliance rules correctly blocked on every re-run — making the dashboard look increasingly empty the more you used it. Fixed by switching batch processing to random sampling instead of always starting from the same rows.
+**A demo-breaking bug found through dogfooding.** Repeated testing kept hitting the same early rows, which my own compliance rules correctly blocked on every re-run — making the dashboard look increasingly empty the more it was used. I fixed this by switching batch processing to random sampling instead of always starting from the same rows.
 
 ## Known limitations
 
