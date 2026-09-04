@@ -14,7 +14,7 @@ Regulation already hands merchants a fix window they mostly waste: the RBI's 202
 
 ```mermaid
 flowchart TD
-    A[Synthetic mandate dataset<br/>grounded in real Indian bank data] --> B[Risk model<br/>logistic regression, AUC 0.649]
+    A[Synthetic mandate dataset<br/>grounded in real Indian bank data      ] --> B[Risk model<br/>logistic regression, AUC 0.649    ]
     B --> C{Risk band}
     C -->|Low/Medium/High/Critical| D[Rule engine<br/>cost-aware action mapping]
     D --> E{Compliance check<br/>DB-backed, NPCI/RBI rules}
@@ -84,6 +84,51 @@ cd frontend
 npm install
 npm run dev
 ```
+
+## How it was built
+
+A. Grounding in real data. No public dataset models UPI recurring mandates, so a real Indian bank transaction dataset (1M+ transactions, ~884K customers) was used to extract genuine statistical parameters — transaction amount distributions, per-customer balance volatility, day-of-month spending patterns (real evidence of salary-cycle clustering).
+
+B. Generating synthetic customers. data_gen/generate_data.py uses those real parameters to invent 3,000 synthetic customers, each with a baseline balance, a volatility score, a salary day, and a recurring mandate amount — then simulates 6 billing cycles per customer (18,000 rows total). A separate, independent piece of logic decides whether each simulated debit succeeds or fails — including a "bad month" shock event whose probability is tied to that customer's own volatility — deliberately kept separate from the model's input features so the model has to genuinely learn the relationship, not just decode a formula. After several calibration passes, this reached a realistic 14–18% failure rate matching NPCI's real-world numbers.
+
+C. Training the risk model. model/train_risk_model.py splits customers (not rows) into train/test so no customer leaks across the split, then trains a logistic regression on 6 features (amount, balance, days-since-salary, recent failure rate, amount-to-balance ratio, balance volatility) to predict failure. Final result: AUC 0.649, evaluated on customers the model never saw. The trained model and its scaler are saved to model/risk_model.joblib; the evaluation metrics are saved separately to model/model_metrics.json so they're servable via API.
+
+D. Building the decision logic. rules/rule_engine.py calibrates four risk bands (Low/Medium/High/Critical) directly against real failure-rate-by-decile data, then maps risk + mandate value to one of five bounded actions. rules/reactive_triage.py encodes real NPCI retry limits (max 3 retries, staggered 24h/72h/168h windows) and classifies failures as retry-worthy or silent-churn, gated by an ROI calculation. None of this is machine-learned — it's deterministic, because these are regulatory facts and business policy, not probabilistic judgment calls.
+
+E. Building the messaging layer. messaging/generate_message.py wraps the Gemini API with per-action prompt templates, a guardrail system prompt (no promises, no threats, no fabricated details), and an English/Hinglish tone option.
+
+F. Building the persistence and API layer. PostgreSQL holds four tables (customers, mandates, cycle_events, messages). backend/orchestrator.py is the single function that ties every piece above together into one pipeline. FastAPI exposes it via /run-batch (write) and /stats, /events, /model-info (read).
+
+G. Building the frontend. A React dashboard, styled with real colors extracted from Razorpay's own brand, calls those endpoints to show live batch runs, an expandable audit trail, and a standalone message-preview widget.
+
+## What happens when the system actually runs — one mandate's journey
+
+A batch is triggered — either a live click of "Run Batch" on the dashboard, or a curl request — specifying how many mandates to process, whether to generate messages, which tone, and whether to create real Razorpay objects.
+
+Random rows are sampled from the 18,000-row synthetic dataset (not always the same starting rows — this was a fix made after discovering repeated demo runs kept hitting already-processed, compliance-blocked customers).
+
+For each row: the customer and mandate are looked up or created in Postgres (with a concurrency-safe fallback if two requests collide on the same new customer).
+
+The risk model scores the mandate — its 6 features go through the saved scaler and logistic regression, producing a probability of failure.
+
+The rule engine decides a risk band and a candidate action — but before that action is allowed to fire, a real database query checks compliance: does this customer already have an active notice this cycle? Has this mandate already gotten an intervention this cycle? If either is true, the action is downgraded to no_action and the block is logged.
+
+A deterministic reason code is computed — the model's own coefficients multiplied by this specific customer's standardized feature values, ranked by contribution, turned into a plain-English explanation.
+
+The ground-truth outcome is checked (in this synthetic system, this is the pre-generated label; in a real deployment, this would come from a payment gateway webhook days later) .  
+
+If it failed:
+Reactive triage runs — classifying the failure as retry-worthy (marginal or severe shortfall) or silent-churn (recent failure pattern suggests disengagement, not cash shortage — in which case retries are hard-blocked regardless of ROI math). For retry-worthy cases, an expected-value calculation weighs estimated recovery against processing and friction costs, scheduling a retry only if it clears that bar, within NPCI's 3-attempt legal limit.
+
+If messaging is enabled and an action fired (capped at 2–4 per batch to respect Gemini's daily quota), Gemini generates the actual customer-facing text — in English or Hinglish — following the guardrails.
+
+If Razorpay integration is enabled and this is a genuinely new mandate, real API calls create an actual test-mode Plan, Customer, and Subscription in Razorpay's system — verifiable in their own dashboard.
+
+Everything is written to cycle_events (and messages, if generated) — this row is now a permanent, queryable audit record.
+
+The batch finishes, returns a summary (counts of each action, failures, blocks, messages, Razorpay objects created), and the dashboard refreshes — pulling fresh cumulative stats and the newest events from the database, with the newly-created rows briefly highlighted.
+
+A judge (or you) can click into any row and see the complete decision record: the risk score, why it was flagged, whether it was blocked and why, how it was triaged if it failed, what message was generated, and the real Razorpay subscription ID if one exists — the full "would you trust it" audit trail, end to end.
 
 ## Real challenges and how I solved them
 
