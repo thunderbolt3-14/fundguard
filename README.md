@@ -14,7 +14,7 @@ Regulation already hands merchants a fix window they mostly waste: the RBI's 202
 
 ```mermaid
 flowchart TD
-    A[Synthetic mandate dataset<br/>grounded in real Indian bank data      ] --> B[Risk model<br/>logistic regression, AUC 0.649    ]
+    A[Synthetic mandate dataset] --> B[Risk model:AUC 0.649]
     B --> C{Risk band}
     C -->|Low/Medium/High/Critical| D[Rule engine<br/>cost-aware action mapping]
     D --> E{Compliance check<br/>DB-backed, NPCI/RBI rules}
