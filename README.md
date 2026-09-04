@@ -14,20 +14,20 @@ Regulation already hands merchants a fix window they mostly waste: the RBI's 202
 
 ```mermaid
 flowchart TD
-     A["`Synthetic mandate dataset<br/>grounded in real Indian bank data`"] --> B["`Risk model<br/>logistic regression, AUC 0.649`"]
-    B --> C{Risk band}
-    C -->|Low/Medium/High/Critical| D[Rule engine<br/>cost-aware action mapping]
-    D --> E{Compliance check<br/>DB-backed, NPCI/RBI rules}
-    E -->|Blocked| F[No action - logged]
-    E -->|Allowed| G["`Predictive intervention<br/>nudge / date-shift / fallback`"]
-    G --> H[Gemini messaging layer<br/>English or Hinglish]
-    B --> I{Actual outcome}
-    I -->|Failed| J[Reactive triage<br/>retry-worthy vs silent-churn]
-    J --> K["`ROI-gated retry<br/>NPCI 3-retry cap, 24h/72h/168h windows`"]
-    G --> L[(PostgreSQL<br/>audit trail)]
+    A["`Synthetic mandate dataset<br/>grounded in real<br/>Indian bank data`"] --> B["`Risk model<br/>logistic regression<br/>AUC 0.649`"]
+    B --> C{"`Risk band`"}
+    C -->|Low/Medium/High/Critical| D["`Rule engine<br/>cost-aware<br/>action mapping`"]
+    D --> E{"`Compliance check<br/>DB-backed<br/>NPCI/RBI rules`"}
+    E -->|Blocked| F["`No action<br/>logged`"]
+    E -->|Allowed| G["`Predictive intervention<br/>nudge / date-shift<br/>/ fallback`"]
+    G --> H["`Gemini messaging layer<br/>English or Hinglish`"]
+    B --> I{"`Actual outcome`"}
+    I -->|Failed| J["`Reactive triage<br/>retry-worthy vs<br/>silent-churn`"]
+    J --> K["`ROI-gated retry<br/>NPCI 3-retry cap<br/>24h/72h/168h windows`"]
+    G --> L[("`PostgreSQL<br/>audit trail`")]
     K --> L
-    G --> M["`Razorpay test-mode API<br/>real Plan/Customer/Subscription`"]
-    L --> N[React dashboard]
+    G --> M["`Razorpay test-mode API<br/>real Plan/Customer<br/>/Subscription`"]
+    L --> N["`React dashboard`"]
 ```
 
 ## How it works
